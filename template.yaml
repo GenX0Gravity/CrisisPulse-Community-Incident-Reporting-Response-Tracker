@@ -311,27 +311,21 @@ Resources:
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - !If
-            - UseCloudFront
-            - Sid: AllowCloudFrontServicePrincipalReadOnly
-              Effect: Allow
-              Principal:
-                Service: cloudfront.amazonaws.com
-              Action: s3:GetObject
-              Resource: !Sub "${FrontendBucket.Arn}/*"
-              Condition:
-                StringEquals:
-                  "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
-            - Sid: PublicReadGetObject
-              Effect: Allow
-              Principal: "*"
-              Action: s3:GetObject
-              Resource: !Sub "${FrontendBucket.Arn}/*"
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
 
   # ───────────────────── Lambda Functions ────────────────────────────
 
@@ -500,6 +494,27 @@ Resources:
             Auth:
               Authorizer: CognitoAuthorizer
 
+  # ───────────────────── Serve Frontend (HTTPS) ──────────────────────
+  ServeFrontendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: frontend/
+      Handler: serve_frontend.handler
+      Description: "Serves static frontend dashboard assets securely over native HTTPS via API Gateway"
+      Events:
+        RootApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /
+            Method: GET
+        StaticProxyApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /{proxy+}
+            Method: GET
+
   # Step Functions task Lambda — classify severity, bounded duplicate detection, & validate photo
   ProcessIncidentFunction:
     Type: AWS::Serverless::Function
@@ -545,6 +560,10 @@ Outputs:
   ApiUrl:
     Description: CrisisPulse API base URL
     Value: !Sub "https://${CrisisPulseApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  SecureFrontendUrl:
+    Description: Live secure HTTPS URL for the CrisisPulse web dashboard (Browser-trusted TLS)
+    Value: !Sub "https://${CrisisPulseApi}.execute-api.${AWS::Region}.amazonaws.com/prod/"
 
   PhotoBucketName:
     Description: Private S3 bucket for incident photos

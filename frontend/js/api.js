@@ -18,11 +18,14 @@ class CrisisPulseApi {
     if (configured && !configured.includes("localhost") && !configured.includes("127.0.0.1")) {
       return configured.replace(/\/+$/, "");
     }
-    // When running locally in browser (e.g. http://localhost:8000 or http://127.0.0.1:8000),
-    // automatically match the current host and port to avoid port mismatch issues
-    if (typeof window !== "undefined" && window.location && window.location.origin) {
+    // When running inside API Gateway directly (execute-api) or when same-origin
+    if (typeof window !== "undefined" && window.location) {
       const origin = window.location.origin;
-      if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
+      if (origin && origin.includes("execute-api")) {
+        const path = window.location.pathname.startsWith("/prod") ? "/prod" : "";
+        return `${origin}${path}`.replace(/\/+$/, "");
+      }
+      if (origin && (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1"))) {
         return origin.replace(/\/+$/, "");
       }
     }
