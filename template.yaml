@@ -63,6 +63,50 @@ Globals:
 # ════════════════════════════ Resources ══════════════════════════════
 Resources:
 
+  # ───────────────────── Cognito User Pool (Coordinators) ─────────────
+  CrisisPulseUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-coordinators"
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UserPoolTags:
+        Application: CrisisPulse
+        Environment: Production
+
+  CrisisPulseUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-coordinator-client"
+      UserPoolId: !Ref CrisisPulseUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+        - COGNITO
+
+  CoordinatorsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: EmergencyCoordinators
+      Description: Authorized emergency response coordinators with status update permissions
+      UserPoolId: !Ref CrisisPulseUserPool
+      Precedence: 0
+
   # ───────────────────── API Gateway HTTP API ────────────────────────
   CrisisPulseApi:
     Type: AWS::Serverless::HttpApi
@@ -72,6 +116,14 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              audience:
+                - !Ref CrisisPulseUserPoolClient
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CrisisPulseUserPool}"
       CorsConfiguration:
         AllowOrigins:
           - !Ref FrontendOrigin
@@ -374,13 +426,13 @@ Resources:
             Path: /incidents/{id}
             Method: GET
 
-  # PATCH /incidents/{id} — Public descriptive updates (status modifications forbidden)
+  # PATCH /incidents/{id} — Protected descriptive updates (status modifications forbidden)
   UpdateIncidentFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/
       Handler: handlers.update_incident.handler
-      Description: "PATCH /incidents/{id} — public incident descriptive update"
+      Description: "PATCH /incidents/{id} — protected incident descriptive update (status updates forbidden)"
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -396,6 +448,8 @@ Resources:
             ApiId: !Ref CrisisPulseApi
             Path: /incidents/{id}
             Method: PATCH
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # POST /coordinator/incidents/{id}/status — Coordinator-only status transition endpoint
   CoordinatorUpdateStatusFunction:
@@ -403,7 +457,7 @@ Resources:
     Properties:
       CodeUri: src/
       Handler: handlers.coordinator_update_status.handler
-      Description: "POST /coordinator/incidents/{id}/status — coordinator status transition"
+      Description: "POST /coordinator/incidents/{id}/status — protected coordinator status transition"
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -419,6 +473,8 @@ Resources:
             ApiId: !Ref CrisisPulseApi
             Path: /coordinator/incidents/{id}/status
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # Step Functions task Lambda — classify severity, bounded duplicate detection, & validate photo
   ProcessIncidentFunction:
@@ -485,3 +541,19 @@ Outputs:
   FrontendBucketName:
     Description: S3 bucket for static website assets (Private with CloudFront OAC)
     Value: !Ref FrontendBucket
+
+  UserPoolId:
+    Description: Cognito User Pool ID for emergency coordinators
+    Value: !Ref CrisisPulseUserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito App Client ID for emergency coordinators
+    Value: !Ref CrisisPulseUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
+
+  UserPoolArn:
+    Description: ARN of the Cognito User Pool
+    Value: !GetAtt CrisisPulseUserPool.Arn

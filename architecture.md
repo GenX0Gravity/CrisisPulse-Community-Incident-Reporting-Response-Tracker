@@ -169,17 +169,33 @@ Stored as a native DynamoDB list of maps on every incident:
 
 ## 4. Security & Least-Privilege IAM Matrix
 
-| Component | AWS Resource | Granted Actions | Scope / Resource Constraint |
-| :--- | :--- | :--- | :--- |
-| `HealthFunction` | CloudWatch Logs | `logs:CreateLogStream`, `PutLogEvents` | Single function log group |
-| `CreateUploadFunction` | `PhotoBucket` | `s3:PutObject` | Restricted to `uploads/*` only |
-| `CreateIncidentFunction` | `IncidentsTable`, `IncidentWorkflow` | `dynamodb:PutItem`, `GetItem`, `states:StartExecution` | Incidents table ARN and State Machine ARN |
-| `ListIncidentsFunction` | `IncidentsTable` | `dynamodb:Query` | Restricted to `createdAt-index` GSI |
-| `GetIncidentFunction` | `IncidentsTable`, `PhotoBucket` | `dynamodb:GetItem`, `s3:GetObject` | Table ARN and `uploads/*` |
-| `UpdateIncidentFunction` | `IncidentsTable` | `dynamodb:GetItem`, `UpdateItem` | Table ARN; code forbids status changes (403) |
-| `CoordinatorUpdateStatusFunction` | `IncidentsTable` | `dynamodb:GetItem`, `UpdateItem` | Table ARN; requires Cognito / JWT auth (401) |
-| `ProcessIncidentFunction` | `IncidentsTable`, `PhotoBucket` | `dynamodb:Query`, `s3:HeadObject` | `category-createdAt-index` GSI and `uploads/*` |
-| `IncidentWorkflow` (SFN) | `ProcessIncidentFunction`, `IncidentsTable` | `lambda:InvokeFunction`, `dynamodb:UpdateItem` | Process Lambda ARN and Incidents Table ARN |
+### 4.1 Authentication & Authorization Boundaries
+CrisisPulse employs a defense-in-depth security model combining API Gateway perimeter authentication and Lambda-level role validation:
+
+1. **Public Endpoints (Unauthenticated):**
+   - `GET /health`: Public liveness probe.
+   - `GET /incidents`: Community incident feed.
+   - `GET /incidents/{id}`: Detailed view of single incident.
+   - `POST /incidents`: Community reporting submission (protected by server-side schema validation and DynamoDB idempotency locks).
+   - `POST /uploads`: Presigned upload URL generation (restricted to `image/*` and 5MB limit).
+
+2. **Protected Write Endpoints (`CognitoAuthorizer` Required):**
+   - `PATCH /incidents/{id}`: Protected by API Gateway `CognitoAuthorizer`. Unauthenticated callers receive **HTTP 401**. Modifying `status` via this endpoint is strictly forbidden and returns **HTTP 403**.
+   - `POST /coordinator/incidents/{id}/status`: Protected by API Gateway `CognitoAuthorizer`. Unauthenticated callers receive **HTTP 401**. Enforces canonical status validation and legal transitions (`Reported` -> `Under Review` -> `In Progress`/`Resolved`).
+
+### 4.2 IAM Least-Privilege Permissions Matrix
+
+| Component | AWS Resource | Granted Actions | Scope / Resource Constraint | Auth Requirement |
+| :--- | :--- | :--- | :--- | :--- |
+| `HealthFunction` | CloudWatch Logs | `logs:CreateLogStream`, `PutLogEvents` | Single function log group | None (Public) |
+| `CreateUploadFunction` | `PhotoBucket` | `s3:PutObject` | Restricted to `uploads/*` only | None (Public) |
+| `CreateIncidentFunction` | `IncidentsTable`, `IncidentWorkflow` | `dynamodb:PutItem`, `GetItem`, `states:StartExecution` | Incidents table ARN and State Machine ARN | None (Public) |
+| `ListIncidentsFunction` | `IncidentsTable` | `dynamodb:Query` | Restricted to `createdAt-index` GSI | None (Public) |
+| `GetIncidentFunction` | `IncidentsTable`, `PhotoBucket` | `dynamodb:GetItem`, `s3:GetObject` | Table ARN and `uploads/*` | None (Public) |
+| `UpdateIncidentFunction` | `IncidentsTable` | `dynamodb:GetItem`, `UpdateItem` | Table ARN; rejects unauth (401) & status changes (403) | **CognitoAuthorizer** |
+| `CoordinatorUpdateStatusFunction` | `IncidentsTable` | `dynamodb:GetItem`, `UpdateItem` | Table ARN; rejects unauth (401); verifies lifecycle | **CognitoAuthorizer** |
+| `ProcessIncidentFunction` | `IncidentsTable`, `PhotoBucket` | `dynamodb:Query`, `s3:HeadObject` | `category-createdAt-index` GSI and `uploads/*` | Internal (SFN Task) |
+| `IncidentWorkflow` (SFN) | `ProcessIncidentFunction`, `IncidentsTable` | `lambda:InvokeFunction`, `dynamodb:UpdateItem` | Process Lambda ARN and Incidents Table ARN | Internal (IAM Role) |
 
 ---
 

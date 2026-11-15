@@ -13,9 +13,18 @@ try:
     table = dynamodb.Table(TABLE_NAME)
 except Exception:
     boto3 = None
-    Key = None
     dynamodb = None
     table = None
+
+    class Key:  # type: ignore[no-redef]
+        def __init__(self, name: str):
+            self.name = name
+
+        def eq(self, val):
+            return self
+
+        def gte(self, val):
+            return self
 
 
 def handler(event, context):

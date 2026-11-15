@@ -318,10 +318,17 @@ class IntegratedDevServerHandler(http.server.SimpleHTTPRequestHandler):
             incident_id = path.replace("/incidents/", "").strip()
             body = self._read_body_json()
 
-            # Forbid public status updates
+            # Reject unauthenticated requests
+            auth = self.headers.get("Authorization", "")
+            if not auth or "bearer" not in auth.lower():
+                return self._send_json({
+                    "error": "Unauthorized: Authentication required to modify incident reports. Provide Authorization Bearer token."
+                }, 401)
+
+            # Forbid public status updates on /incidents/{id}
             if "status" in body:
                 return self._send_json({
-                    "error": "Public users are not permitted to modify incident status. Status updates require coordinator authorization via /coordinator/incidents/{id}/status."
+                    "error": "Forbidden: Public users are not permitted to modify incident status. Status updates require coordinator authorization via /coordinator/incidents/{id}/status."
                 }, 403)
 
             errors = validate_update(body)

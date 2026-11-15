@@ -97,30 +97,46 @@ def validate():
     assert fe_pab.get("BlockPublicPolicy") is True
     print("  [OK] Photo & Frontend Buckets: 100% private with BlockPublicAccess & OAC")
 
-    # 7. Endpoint verification
+    # 7. Endpoint verification & Authorizer Protection
     expected_endpoints = {
-        ("GET", "/health"): "HealthFunction",
-        ("POST", "/uploads"): "CreateUploadFunction",
-        ("POST", "/incidents"): "CreateIncidentFunction",
-        ("GET", "/incidents"): "ListIncidentsFunction",
-        ("GET", "/incidents/{id}"): "GetIncidentFunction",
-        ("PATCH", "/incidents/{id}"): "UpdateIncidentFunction",
-        ("POST", "/coordinator/incidents/{id}/status"): "CoordinatorUpdateStatusFunction",
+        ("GET", "/health"): ("HealthFunction", False),
+        ("POST", "/uploads"): ("CreateUploadFunction", False),
+        ("POST", "/incidents"): ("CreateIncidentFunction", False),
+        ("GET", "/incidents"): ("ListIncidentsFunction", False),
+        ("GET", "/incidents/{id}"): ("GetIncidentFunction", False),
+        ("PATCH", "/incidents/{id}"): ("UpdateIncidentFunction", True),
+        ("POST", "/coordinator/incidents/{id}/status"): ("CoordinatorUpdateStatusFunction", True),
     }
+
+    # Verify Cognito User Pool and Client exist
+    assert "CrisisPulseUserPool" in resources, "CrisisPulseUserPool resource missing"
+    assert "CrisisPulseUserPoolClient" in resources, "CrisisPulseUserPoolClient resource missing"
+    api_auth = resources["CrisisPulseApi"]["Properties"].get("Auth", {})
+    assert "CognitoAuthorizer" in api_auth.get("Authorizers", {}), "CognitoAuthorizer missing from CrisisPulseApi"
+    print("  [OK] Cognito User Pool, Client, and API Gateway CognitoAuthorizer verified")
     
     found_endpoints = {}
+    endpoint_auth = {}
     for res_name, res_val in resources.items():
         if res_val.get("Type") == "AWS::Serverless::Function":
             events = res_val.get("Properties", {}).get("Events", {})
             for ev_name, ev_val in events.items():
                 if ev_val.get("Type") == "HttpApi":
                     props = ev_val.get("Properties", {})
-                    found_endpoints[(props.get("Method"), props.get("Path"))] = res_name
+                    ep_key = (props.get("Method"), props.get("Path"))
+                    found_endpoints[ep_key] = res_name
+                    auth_prop = props.get("Auth", {})
+                    has_auth = auth_prop.get("Authorizer") == "CognitoAuthorizer"
+                    endpoint_auth[ep_key] = has_auth
 
-    for ep, fn in expected_endpoints.items():
+    for ep, (fn, requires_auth) in expected_endpoints.items():
         assert ep in found_endpoints, f"Missing endpoint: {ep[0]} {ep[1]}"
         assert found_endpoints[ep] == fn, f"Endpoint {ep} mapped to {found_endpoints[ep]}, expected {fn}"
-        print(f"  [OK] Endpoint {ep[0]:<5} {ep[1]:<38} -> {fn}")
+        assert endpoint_auth[ep] == requires_auth, (
+            f"Endpoint {ep} requires_auth={requires_auth}, but found {endpoint_auth[ep]}"
+        )
+        auth_tag = "[PROTECTED: CognitoAuthorizer]" if requires_auth else "[PUBLIC]"
+        print(f"  [OK] Endpoint {ep[0]:<5} {ep[1]:<38} -> {fn:<32} {auth_tag}")
 
     # 8. Handler file existence and syntax
     src_dir = os.path.join(root, "src")
@@ -152,7 +168,10 @@ def validate():
     assert "IncidentWorkflowArn" in outputs, "Missing IncidentWorkflowArn output"
     assert "FrontendCloudFrontUrl" in outputs, "Missing FrontendCloudFrontUrl output"
     assert "FrontendBucketName" in outputs, "Missing FrontendBucketName output"
-    print("  [OK] Outputs: ApiUrl, PhotoBucketName, IncidentsTableName, IncidentWorkflowArn, FrontendCloudFrontUrl, FrontendBucketName")
+    assert "UserPoolId" in outputs, "Missing UserPoolId output"
+    assert "UserPoolClientId" in outputs, "Missing UserPoolClientId output"
+    assert "UserPoolArn" in outputs, "Missing UserPoolArn output"
+    print("  [OK] Outputs: ApiUrl, PhotoBucketName, IncidentsTableName, IncidentWorkflowArn, FrontendCloudFrontUrl, FrontendBucketName, UserPoolId, UserPoolClientId, UserPoolArn")
 
     print("\n✓ ALL VALIDATION CHECKS PASSED!")
 

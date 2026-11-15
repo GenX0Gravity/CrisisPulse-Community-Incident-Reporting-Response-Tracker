@@ -28,13 +28,13 @@ Full architectural diagrams, sequence flows, and threat models are documented in
      ▼
  API Gateway HTTP API  (CORS + Default Route Throttling: 50 req/s, Burst 100)
      │
-     ├── GET  /health           → HealthFunction
-     ├── POST /uploads          → CreateUploadFunction  → S3 Photo Bucket (Presigned PUT, ≤5MB)
-     ├── POST /incidents        → CreateIncidentFunction → DynamoDB (Idempotency) + SFN
-     ├── GET  /incidents        → ListIncidentsFunction  → DynamoDB (createdAt-index GSI)
-     ├── GET  /incidents/{id}   → GetIncidentFunction    → DynamoDB + S3 (Presigned GET)
-     ├── PATCH /incidents/{id}  → UpdateIncidentFunction → DynamoDB (Public: status blocked)
-     └── POST /coordinator/...  → CoordinatorUpdateStatusFunction → DynamoDB (Cognito / JWT Auth)
+     ├── GET  /health           → HealthFunction [PUBLIC]
+     ├── POST /uploads          → CreateUploadFunction  → S3 Photo Bucket (Presigned PUT, ≤5MB) [PUBLIC]
+     ├── POST /incidents        → CreateIncidentFunction → DynamoDB (Idempotency) + SFN [PUBLIC]
+     ├── GET  /incidents        → ListIncidentsFunction  → DynamoDB (createdAt-index GSI) [PUBLIC]
+     ├── GET  /incidents/{id}   → GetIncidentFunction    → DynamoDB + S3 (Presigned GET) [PUBLIC]
+     ├── PATCH /incidents/{id}  → UpdateIncidentFunction → DynamoDB [PROTECTED: CognitoAuthorizer]
+     └── POST /coordinator/...  → CoordinatorUpdateStatusFunction → DynamoDB [PROTECTED: CognitoAuthorizer]
                                         │
                                         ▼ (Async StartExecution)
                                 Step Functions (Standard)
@@ -272,18 +272,34 @@ Wait 3 seconds and fetch the incident.
 `isPotentialDuplicate: true`, `duplicateReason` references the first incident ID, and `duplicateCandidates` lists the distance (~77.8m).
 
 ### 6. Test Security & Unauthorized Status Rejections
-Attempt to modify status via public endpoint:
+
+CrisisPulse enforces strict authorization boundaries using **API Gateway HTTP API Cognito Authorizers** and backend validation:
+
+#### A. Attempt Unauthenticated Descriptive Update (HTTP 401 Unauthorized)
 ```bash
 curl -i -X PATCH https://<api-id>.execute-api.<region>.amazonaws.com/prod/incidents/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Unauthorized attempt to modify description"}'
+```
+**Expected Response (401 Unauthorized):**
+```json
+{"error": "Unauthorized: Authentication required to modify incident reports. Please provide a valid Authorization Bearer token."}
+```
+
+#### B. Attempt Status Update on Incident Endpoint (HTTP 403 Forbidden)
+Even with valid authentication, mutating incident lifecycle status via `/incidents/{id}` is permanently prohibited:
+```bash
+curl -i -X PATCH https://<api-id>.execute-api.<region>.amazonaws.com/prod/incidents/<id> \
+  -H "Authorization: Bearer <valid-token>" \
   -H "Content-Type: application/json" \
   -d '{"status": "Resolved"}'
 ```
 **Expected Response (403 Forbidden):**
 ```json
-{"error": "Public users are not permitted to modify incident status. Status updates require coordinator authorization via /coordinator/incidents/{id}/status."}
+{"error": "Forbidden: Incident status cannot be modified via /incidents/{id}. Status updates require coordinator authorization via /coordinator/incidents/{id}/status."}
 ```
 
-Attempt unauthenticated coordinator update:
+#### C. Attempt Unauthenticated Coordinator Status Transition (HTTP 401 Unauthorized)
 ```bash
 curl -i -X POST https://<api-id>.execute-api.<region>.amazonaws.com/prod/coordinator/incidents/<id>/status \
   -H "Content-Type: application/json" \
@@ -291,8 +307,43 @@ curl -i -X POST https://<api-id>.execute-api.<region>.amazonaws.com/prod/coordin
 ```
 **Expected Response (401 Unauthorized):**
 ```json
-{"error": "Coordinator authorization required. Public users cannot modify incident status..."}
+{"error": "Unauthorized: Coordinator authorization required. Public users cannot modify incident status. For the weekend demonstration, configure Cognito User Pool authentication or execute status transitions directly via authenticated AWS Console operations."}
 ```
+
+#### D. Authenticated Coordinator Transition (Cognito JWT / Demo Token)
+To execute authorized status updates:
+
+1. **Create an Emergency Coordinator in Cognito User Pool:**
+   ```bash
+   aws cognito-idp admin-create-user \
+     --user-pool-id <UserPoolId> \
+     --username coordinator1 \
+     --user-attributes Name=email,Value=coordinator@example.gov Name=email_verified,Value=true \
+     --message-action SUPPRESS
+
+   aws cognito-idp admin-set-user-password \
+     --user-pool-id <UserPoolId> \
+     --username coordinator1 \
+     --password "CrisisCoord#2026!" \
+     --permanent
+   ```
+
+2. **Acquire ID/Access Token:**
+   ```bash
+   aws cognito-idp initiate-auth \
+     --auth-flow USER_PASSWORD_AUTH \
+     --client-id <UserPoolClientId> \
+     --auth-parameters USERNAME=coordinator1,PASSWORD="CrisisCoord#2026!"
+   ```
+
+3. **Call Protected Coordinator Endpoint:**
+   ```bash
+   curl -i -X POST https://<api-id>.execute-api.<region>.amazonaws.com/prod/coordinator/incidents/<id>/status \
+     -H "Authorization: Bearer <IdToken>" \
+     -H "Content-Type: application/json" \
+     -d '{"status": "In Progress", "notes": "Emergency response team dispatched to coordinates."}'
+   ```
+   *(For the weekend demo without Cognito setup, provide `-H "Authorization: Bearer demo-coordinator-secret-key-2026"`).*
 
 ---
 
