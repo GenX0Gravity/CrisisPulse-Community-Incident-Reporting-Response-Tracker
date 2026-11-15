@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CrisisPulse — Emergency Operations & Community Incident Tracker</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+</head>
+<body>
+
+  <!-- Mandatory Prototype Disclaimer -->
+  <aside class="prototype-notice" role="alert" aria-label="Prototype Disclaimer">
+    <span>⚠️</span>
+    <span><strong>Prototype Only</strong> — This application is an educational prototype and is <u>NOT</u> connected to 911 or emergency dispatch services. In a real emergency, call local emergency services immediately.</span>
+  </aside>
+
+  <div class="app-container">
+
+    <!-- Top Navigation Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">🚨</div>
+        <div>
+          <h1 class="brand-title">CrisisPulse</h1>
+          <p class="brand-subtitle">Incident Reporting & Response Operations</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" role="tablist" aria-label="Operations Navigation">
+        <button class="nav-tab active" data-tab="feed" role="tab" aria-selected="true" id="tab-btn-feed">
+          📡 Live Feed
+        </button>
+        <button class="nav-tab" data-tab="report" role="tab" aria-selected="false" id="tab-btn-report">
+          📝 Report Incident
+        </button>
+        <button class="nav-tab" data-tab="coordinator" role="tab" aria-selected="false" id="tab-btn-coordinator">
+          🛡️ Coordinator Center
+        </button>
+      </nav>
+
+      <!-- Live API Connection Indicator -->
+      <div class="api-status" title="API Gateway Connection Status" aria-live="polite">
+        <span class="status-dot" id="api-status-dot"></span>
+        <span id="api-status-text">Checking API...</span>
+      </div>
+    </header>
+
+    <!-- Operational Metrics Strip -->
+    <section class="metrics-strip" aria-label="Incident Summary Metrics">
+      <div class="metric-card">
+        <div class="metric-label">Total Reports</div>
+        <div class="metric-value" id="metric-total">0</div>
+        <div class="metric-sub">Recorded incidents</div>
+      </div>
+      <div class="metric-card critical">
+        <div class="metric-label">Critical Priority</div>
+        <div class="metric-value" id="metric-critical" style="color: var(--priority-critical);">0</div>
+        <div class="metric-sub">Score ≥ 75/100</div>
+      </div>
+      <div class="metric-card review">
+        <div class="metric-label">Under Review</div>
+        <div class="metric-value" id="metric-under-review" style="color: var(--status-review);">0</div>
+        <div class="metric-sub">Triage & duplicate check</div>
+      </div>
+      <div class="metric-card progress">
+        <div class="metric-label">In Progress</div>
+        <div class="metric-value" id="metric-in-progress" style="color: var(--cyan-light);">0</div>
+        <div class="metric-sub">Active field response</div>
+      </div>
+      <div class="metric-card resolved">
+        <div class="metric-label">Resolved</div>
+        <div class="metric-value" id="metric-resolved" style="color: var(--priority-low);">0</div>
+        <div class="metric-sub">Mitigated & clear</div>
+      </div>
+    </section>
+
+    <!-- TAB 1: Live Incident Feed -->
+    <main class="tab-content active" id="tab-feed" role="tabpanel" aria-labelledby="tab-btn-feed">
+      <!-- Search & Filters -->
+      <div class="feed-controls">
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="feed-search" placeholder="Search by location, keyword, or incident ID..." aria-label="Search incidents" />
+        </div>
+
+        <select class="filter-select" id="filter-category" aria-label="Filter by Category">
+          <option value="all">All Categories</option>
+          <option value="fire">Fire</option>
+          <option value="medical">Medical</option>
+          <option value="hazmat">Hazardous Materials</option>
+          <option value="flood">Flood</option>
+          <option value="accident">Accident</option>
+          <option value="infrastructure">Infrastructure</option>
+          <option value="weather">Weather</option>
+          <option value="crime">Crime</option>
+          <option value="environmental">Environmental</option>
+          <option value="other">Other</option>
+        </select>
+
+        <select class="filter-select" id="filter-priority" aria-label="Filter by Priority">
+          <option value="all">All Priorities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+
+        <select class="filter-select" id="filter-status" aria-label="Filter by Status">
+          <option value="all">All Statuses</option>
+          <option value="Reported">Reported</option>
+          <option value="Under Review">Under Review</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+          <option value="resolved">Resolved</option>
+          <option value="dismissed">Dismissed</option>
+        </select>
+
+        <button class="btn-secondary" id="btn-refresh-feed" aria-label="Refresh incident feed">
+          🔄 Refresh
+        </button>
+      </div>
+
+      <!-- Incident Cards Grid Container -->
+      <div class="incident-grid" id="incident-feed-container" aria-live="polite">
+        <div class="state-box">
+          <span class="spinner"></span>
+          <p style="margin-top: 0.5rem; color: var(--text-muted);">Loading incidents from API Gateway...</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- TAB 2: Incident Reporting Form -->
+    <section class="tab-content" id="tab-report" role="tabpanel" aria-labelledby="tab-btn-report">
+      <div class="form-panel">
+        <div class="form-header">
+          <h2 class="form-title">Report a Community Incident</h2>
+          <p class="form-subtitle">Submit real-time observations for automated triage, priority scoring, and coordinator dispatch.</p>
+        </div>
+
+        <div id="form-alert-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+        <form id="incident-form" novalidate>
+          <!-- Category Picker -->
+          <div class="form-group">
+            <label id="label-category">Incident Category *</label>
+            <div class="category-picker" role="radiogroup" aria-labelledby="label-category">
+              <button type="button" class="category-option selected" data-category="fire">🔥 Fire</button>
+              <button type="button" class="category-option" data-category="medical">🚑 Medical</button>
+              <button type="button" class="category-option" data-category="hazmat">☣️ Hazmat</button>
+              <button type="button" class="category-option" data-category="flood">🌊 Flood</button>
+              <button type="button" class="category-option" data-category="accident">🚗 Accident</button>
+              <button type="button" class="category-option" data-category="infrastructure">🏗️ Infrastructure</button>
+              <button type="button" class="category-option" data-category="weather">🌪️ Weather</button>
+              <button type="button" class="category-option" data-category="crime">🚨 Crime</button>
+              <button type="button" class="category-option" data-category="environmental">🌲 Environmental</button>
+              <button type="button" class="category-option" data-category="other">📌 Other</button>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div class="form-group">
+            <label for="field-description">Description *</label>
+            <textarea id="field-description" class="form-control" placeholder="Provide factual details: what occurred, current conditions, hazards observed..." maxlength="2000" required></textarea>
+            <div class="char-counter" id="desc-counter">0/2000</div>
+          </div>
+
+          <!-- Approximate Location -->
+          <div class="form-group">
+            <label for="field-location">Approximate Location *</label>
+            <input type="text" id="field-location" class="form-control" placeholder="e.g. 5th Ave & Pine St, near City Library" maxlength="250" required />
+            <p class="field-hint">Street address, landmark, or intersection.</p>
+          </div>
+
+          <!-- Optional Coordinates with GPS -->
+          <div class="form-group">
+            <label>Geographic Coordinates (Optional)</label>
+            <div class="coords-row">
+              <div>
+                <input type="number" step="any" id="field-latitude" class="form-control" placeholder="Latitude (-90 to 90)" />
+              </div>
+              <div>
+                <input type="number" step="any" id="field-longitude" class="form-control" placeholder="Longitude (-180 to 180)" />
+              </div>
+              <button type="button" class="btn-gps" id="btn-use-gps" title="Fill coordinates from browser location">
+                📍 GPS
+              </button>
+            </div>
+            <p class="field-hint">Enables 300-meter duplicate detection against nearby reports.</p>
+          </div>
+
+          <!-- Explicit Risk Factors -->
+          <div class="form-group">
+            <label>Observed Risk Factors (Affects Rule-Based Priority Score)</label>
+            <div class="risk-factors-grid">
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="life_threat" />
+                <span>Immediate Threat to Life</span>
+                <span class="risk-points-tag">+40</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="injuries_reported" />
+                <span>Casualties / Injuries Reported</span>
+                <span class="risk-points-tag">+40</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="active_fire" />
+                <span>Active Uncontained Flames</span>
+                <span class="risk-points-tag">+35</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="trapped_individuals" />
+                <span>Individuals Trapped</span>
+                <span class="risk-points-tag">+35</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="hazardous_materials" />
+                <span>Chemical / Hazmat Spill</span>
+                <span class="risk-points-tag">+30</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="downed_power_lines" />
+                <span>Downed High-Voltage Lines</span>
+                <span class="risk-points-tag">+25</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="vulnerable_population" />
+                <span>Near School / Hospital</span>
+                <span class="risk-points-tag">+25</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="major_road_blocked" />
+                <span>Main Transit Route Blocked</span>
+                <span class="risk-points-tag">+20</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="structural_instability" />
+                <span>Risk of Building Collapse</span>
+                <span class="risk-points-tag">+20</span>
+              </label>
+              <label class="risk-checkbox-label">
+                <input type="checkbox" name="riskFactors" value="water_contamination" />
+                <span>Water Supply Threat</span>
+                <span class="risk-points-tag">+20</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Photo Attachment (Private S3 Presigned Upload) -->
+          <div class="form-group">
+            <label>Scene Photo (Optional, Private S3 Upload)</label>
+            <div class="dropzone" id="photo-dropzone">
+              <input type="file" id="field-photo" accept="image/jpeg,image/png,image/webp" style="display: none;" />
+              <div class="dropzone-content">
+                <div class="dropzone-icon">📷</div>
+                <p><strong>Click to browse</strong> or drag & drop photo here</p>
+                <p class="field-hint">JPEG, PNG, WebP up to 5MB. Uploaded securely via short-lived presigned URL.</p>
+              </div>
+              <div class="photo-preview-wrap" id="photo-preview-wrap">
+                <img id="photo-preview-img" alt="Selected photo preview" />
+                <button type="button" class="btn-remove-photo" id="btn-remove-photo" title="Remove photo">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reporter Name -->
+          <div class="form-group">
+            <label for="field-reporter">Your Name or Alias (Optional)</label>
+            <input type="text" id="field-reporter" class="form-control" placeholder="Anonymous" maxlength="100" />
+          </div>
+
+          <button type="submit" class="btn-primary" id="btn-submit-incident">
+            🚨 Submit Incident Report
+          </button>
+        </form>
+
+        <!-- Live Step Functions Polling Card -->
+        <div class="workflow-poll-card" id="workflow-poll-card" aria-live="polite">
+          <div class="poll-header">
+            <span class="spinner"></span>
+            <span id="poll-status-text">Step Functions workflow executing...</span>
+          </div>
+          <div class="poll-progress-bar">
+            <div class="poll-progress-fill"></div>
+          </div>
+          <div id="poll-result-details"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Coordinator Operations Center -->
+    <section class="tab-content" id="tab-coordinator" role="tabpanel" aria-labelledby="tab-btn-coordinator">
+      <div style="background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius-lg); padding: 1.5rem; overflow-x: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+          <div>
+            <h2 style="font-size: 1.25rem; font-weight: 800;">Coordinator Triage Center</h2>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Direct incident management, status progression, and duplicate auditing.</p>
+          </div>
+          <button class="btn-secondary" onclick="window.crisisPulseApp.loadIncidents()">
+            🔄 Refresh List
+          </button>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.88rem;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--border-subtle); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">
+              <th style="padding: 0.75rem 1rem;">ID</th>
+              <th style="padding: 0.75rem 1rem;">Category</th>
+              <th style="padding: 0.75rem 1rem;">Location</th>
+              <th style="padding: 0.75rem 1rem;">Priority</th>
+              <th style="padding: 0.75rem 1rem;">Status</th>
+              <th style="padding: 0.75rem 1rem; text-align: right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="coordinator-table-body">
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                Loading incidents...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Incident Details & Inspection Modal -->
+  <div class="modal-overlay" id="incident-modal" role="dialog" aria-modal="true" aria-labelledby="modal-incident-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modal-incident-title" style="font-size: 1.15rem; font-weight: 800;">Incident Inspector</h3>
+        <button class="btn-close" id="btn-close-modal" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body" id="modal-incident-body">
+        <!-- Dynamic content filled by coordinator.js -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="window.coordinatorController.closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/form.js"></script>
+  <script src="js/coordinator.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

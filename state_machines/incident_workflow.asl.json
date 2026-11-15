@@ -1,0 +1,147 @@
+{
+  "Comment": "CrisisPulse — End-to-end incident enrichment workflow: deterministic scoring, bounded duplicate detection, photo validation, and state persistence.",
+  "StartAt": "ClassifyAndEnrich",
+  "States": {
+    "ClassifyAndEnrich": {
+      "Type": "Task",
+      "Resource": "${ProcessIncidentFunctionArn}",
+      "ResultPath": "$.result",
+      "Next": "PersistIncidentEnrichment",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.TooManyRequestsException",
+            "Lambda.AWSLambdaException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.errorInfo",
+          "Next": "WorkflowFailed"
+        }
+      ]
+    },
+    "PersistIncidentEnrichment": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${IncidentsTableName}",
+        "Key": {
+          "incidentId": {
+            "S.$": "$.incidentId"
+          }
+        },
+        "UpdateExpression": "SET #s = :status, priority = :priority, priorityScore = :priorityScore, priorityExplanation = :priorityExplanation, isPotentialDuplicate = :isDup, duplicateReason = :dupReason, workflowMetadata.#st = :wfState, workflowMetadata.completedAt = :completedAt, photoValidationReason = :photoReason, statusHistory = list_append(if_not_exists(statusHistory, :emptyList), :newHistory)",
+        "ExpressionAttributeNames": {
+          "#s": "status",
+          "#st": "state"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S.$": "$.result.status"
+          },
+          ":priority": {
+            "S.$": "$.result.priority"
+          },
+          ":priorityScore": {
+            "N.$": "States.Format('{}', $.result.priorityScore)"
+          },
+          ":priorityExplanation": {
+            "S.$": "$.result.priorityExplanation"
+          },
+          ":isDup": {
+            "BOOL.$": "$.result.isPotentialDuplicate"
+          },
+          ":dupReason": {
+            "S.$": "$.result.duplicateReason"
+          },
+          ":wfState": {
+            "S": "COMPLETED"
+          },
+          ":completedAt": {
+            "S.$": "$.result.processedAt"
+          },
+          ":photoReason": {
+            "S.$": "$.result.photoValidation.reason"
+          },
+          ":emptyList": {
+            "L": []
+          },
+          ":newHistory": {
+            "L": [
+              {
+                "M": {
+                  "status": {
+                    "S": "Under Review"
+                  },
+                  "timestamp": {
+                    "S.$": "$.result.processedAt"
+                  },
+                  "actor": {
+                    "S": "step-functions"
+                  },
+                  "notes": {
+                    "S.$": "$.result.historyEntry.notes"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.errorInfo",
+          "Next": "WorkflowFailed"
+        }
+      ],
+      "End": true
+    },
+    "WorkflowFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${IncidentsTableName}",
+        "Key": {
+          "incidentId": {
+            "S.$": "$.incidentId"
+          }
+        },
+        "UpdateExpression": "SET workflowMetadata.#st = :failedState, workflowMetadata.error = :err",
+        "ExpressionAttributeNames": {
+          "#st": "state"
+        },
+        "ExpressionAttributeValues": {
+          ":failedState": {
+            "S": "FAILED"
+          },
+          ":err": {
+            "S.$": "States.JsonToString($.errorInfo)"
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}

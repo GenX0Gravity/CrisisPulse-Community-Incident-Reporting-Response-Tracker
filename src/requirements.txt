@@ -1,0 +1,2 @@
+# boto3 and botocore ship with the Lambda Python 3.12 runtime.
+# Add third-party dependencies below; SAM installs them on `sam build`.

@@ -1,0 +1,13 @@
+{
+  "body": "{\"category\": \"fire\", \"description\": \"Three-storey apartment building on fire near Main St and 5th Ave. Smoke visible, emergency responders arriving.\", \"approximateLocation\": \"Main St & 5th Ave\", \"latitude\": 40.7128, \"longitude\": -74.006, \"riskFactors\": [\"active_fire\", \"trapped_individuals\"], \"idempotencyKey\": \"demo-idemp-key-12345\", \"reporterName\": \"Jane Doe\"}",
+  "headers": {
+    "Content-Type": "application/json",
+    "Idempotency-Key": "demo-idemp-key-12345"
+  },
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/incidents"
+    }
+  }
+}

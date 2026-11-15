@@ -1,0 +1,487 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CrisisPulse — Community Incident Reporting & Response Tracker (MVP).
+  Serverless backend: API Gateway HTTP API (Throttled), Lambda (Python 3.12),
+  DynamoDB (on-demand), S3 (private photos), Step Functions (Standard),
+  and CloudFront HTTPS Static Frontend Hosting.
+
+# ════════════════════════════ Parameters ═════════════════════════════
+Parameters:
+  FrontendOrigin:
+    Type: String
+    Default: "http://localhost:3000"
+    Description: Allowed CORS origin for local development or custom frontend domain.
+
+  DemoMode:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >
+      When "true", the Step Functions workflow skips S3 photo validation
+      and the health endpoint reports demo status.
+
+  MaxImageSizeMB:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 10
+    Description: Maximum allowed image upload size in megabytes.
+
+  PresignedUrlExpirySec:
+    Type: Number
+    Default: 300
+    MinValue: 60
+    MaxValue: 900
+    Description: Presigned URL lifetime in seconds (default 5 min).
+
+  CognitoUserPoolArn:
+    Type: String
+    Default: ""
+    Description: Optional Cognito User Pool ARN for protecting coordinator endpoints.
+
+# ════════════════════════════ Globals ════════════════════════════════
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 256
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref IncidentsTable
+        PHOTO_BUCKET: !Ref PhotoBucket
+        DEMO_MODE: !Ref DemoMode
+        FRONTEND_ORIGIN: !Ref FrontendOrigin
+        MAX_IMAGE_SIZE_MB: !Ref MaxImageSizeMB
+        PRESIGNED_URL_EXPIRY_SEC: !Ref PresignedUrlExpirySec
+        POWERTOOLS_SERVICE_NAME: CrisisPulse
+
+# ════════════════════════════ Resources ══════════════════════════════
+Resources:
+
+  # ───────────────────── API Gateway HTTP API ────────────────────────
+  CrisisPulseApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      Description: CrisisPulse public & coordinator HTTP API
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref FrontendOrigin
+          - !Sub "https://${FrontendDistribution.DomainName}"
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Amz-Date
+          - Authorization
+          - Idempotency-Key
+          - X-Idempotency-Key
+        MaxAge: 300
+
+  # ───────────────────── DynamoDB Table ──────────────────────────────
+  IncidentsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+        - AttributeName: entityType
+          AttributeType: S
+        - AttributeName: category
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: createdAt-index
+          KeySchema:
+            - AttributeName: entityType
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: category-createdAt-index
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Application
+          Value: CrisisPulse
+
+  # ───────────────────── S3 Photo Bucket (Private) ──────────────────
+  PhotoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Ref FrontendOrigin
+              - !Sub "https://${FrontendDistribution.DomainName}"
+            AllowedMethods:
+              - PUT
+            AllowedHeaders:
+              - "*"
+            MaxAge: 300
+            ExposedHeaders:
+              - ETag
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Application
+          Value: CrisisPulse
+
+  # Deny non-TLS access to the photo bucket
+  PhotoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PhotoBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt PhotoBucket.Arn
+              - !Sub "${PhotoBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # ───────────── Frontend Static Hosting (Private S3 + CloudFront HTTPS) ─────────
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Application
+          Value: CrisisPulse
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: CrisisPulseFrontendOAC
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: CrisisPulse HTTPS Frontend Web Distribution
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Application
+          Value: CrisisPulse
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+  # ───────────────────── Lambda Functions ────────────────────────────
+
+  # GET /health
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.health.handler
+      Description: "GET /health — liveness check"
+      Events:
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /health
+            Method: GET
+
+  # POST /uploads — presigned S3 PUT URL
+  CreateUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.create_upload.handler
+      Description: "POST /uploads — generate presigned S3 upload URL"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${PhotoBucket.Arn}/uploads/*"
+      Events:
+        CreateUploadApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /uploads
+            Method: POST
+
+  # POST /incidents
+  CreateIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.create_incident.handler
+      Description: "POST /incidents — create incident report, idempotency & workflow kickoff"
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref IncidentWorkflow
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+              Resource: !GetAtt IncidentsTable.Arn
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Ref IncidentWorkflow
+      Events:
+        CreateIncidentApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /incidents
+            Method: POST
+
+  # GET /incidents
+  ListIncidentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.list_incidents.handler
+      Description: "GET /incidents — paginated listing sorted by createdAt"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub "${IncidentsTable.Arn}/index/createdAt-index"
+      Events:
+        ListIncidentsApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /incidents
+            Method: GET
+
+  # GET /incidents/{id}
+  GetIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.get_incident.handler
+      Description: "GET /incidents/{id} — fetch single incident with photo URL"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt IncidentsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${PhotoBucket.Arn}/uploads/*"
+      Events:
+        GetIncidentApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /incidents/{id}
+            Method: GET
+
+  # PATCH /incidents/{id} — Public descriptive updates (status modifications forbidden)
+  UpdateIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.update_incident.handler
+      Description: "PATCH /incidents/{id} — public incident descriptive update"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+              Resource: !GetAtt IncidentsTable.Arn
+      Events:
+        UpdateIncidentApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /incidents/{id}
+            Method: PATCH
+
+  # POST /coordinator/incidents/{id}/status — Coordinator-only status transition endpoint
+  CoordinatorUpdateStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.coordinator_update_status.handler
+      Description: "POST /coordinator/incidents/{id}/status — coordinator status transition"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt IncidentsTable.Arn
+      Events:
+        CoordinatorStatusApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CrisisPulseApi
+            Path: /coordinator/incidents/{id}/status
+            Method: POST
+
+  # Step Functions task Lambda — classify severity, bounded duplicate detection, & validate photo
+  ProcessIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.process_incident.handler
+      Description: "Step Functions task — deterministic scoring, bounded duplicate check, photo check"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub "${IncidentsTable.Arn}/index/category-createdAt-index"
+            - Effect: Allow
+              Action:
+                - s3:HeadObject
+              Resource: !Sub "${PhotoBucket.Arn}/uploads/*"
+
+  # ───────────────── Step Functions State Machine ────────────────────
+  IncidentWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: state_machines/incident_workflow.asl.json
+      DefinitionSubstitutions:
+        ProcessIncidentFunctionArn: !GetAtt ProcessIncidentFunction.Arn
+        IncidentsTableName: !Ref IncidentsTable
+      Type: STANDARD
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt ProcessIncidentFunction.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource: !GetAtt IncidentsTable.Arn
+
+# ════════════════════════════ Outputs ════════════════════════════════
+Outputs:
+  ApiUrl:
+    Description: CrisisPulse API base URL
+    Value: !Sub "https://${CrisisPulseApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  PhotoBucketName:
+    Description: Private S3 bucket for incident photos
+    Value: !Ref PhotoBucket
+
+  IncidentsTableName:
+    Description: DynamoDB table for incidents
+    Value: !Ref IncidentsTable
+
+  IncidentWorkflowArn:
+    Description: Step Functions state machine ARN
+    Value: !Ref IncidentWorkflow
+
+  FrontendCloudFrontUrl:
+    Description: HTTPS URL for the CloudFront frontend distribution
+    Value: !Sub "https://${FrontendDistribution.DomainName}"
+
+  FrontendBucketName:
+    Description: S3 bucket for static website assets (Private with CloudFront OAC)
+    Value: !Ref FrontendBucket
