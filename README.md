@@ -6,12 +6,13 @@
 
 ---
 
-## 📌 Important Deployment Status & Verification Notice
+## 📌 Live Deployed Application
 
-> **Environment Assessment:**  
-> The AWS SAM CLI (`sam`) and AWS CLI (`aws`) were checked on this local workstation and are **not currently installed on PATH**.  
-> In strict accordance with our operational safety guidelines, **no AWS deployment has been simulated or pretended**.  
-> The entire infrastructure has been fully authored, compiled, syntax-checked, and validated against AWS CloudFormation schemas, passing **46 unit tests across 8 test suites** and **100% of SAM architecture checks**. Follow the deployment instructions below to deploy directly to your AWS account.
+- **Live Secure Web Dashboard (HTTPS):** [https://7pfsdt8cei.execute-api.ap-southeast-2.amazonaws.com/prod/](https://7pfsdt8cei.execute-api.ap-southeast-2.amazonaws.com/prod/)
+- **API Gateway HTTP API Endpoint:** `https://7pfsdt8cei.execute-api.ap-southeast-2.amazonaws.com/prod`
+- **AWS Region:** `ap-southeast-2` (Sydney)
+- **Deployment Stack Name:** `CrisisPulse-Prod`
+- **GitHub Repository:** [https://github.com/GenX0Gravity/CrisisPulse-Community-Incident-Reporting-Response-Tracker](https://github.com/GenX0Gravity/CrisisPulse-Community-Incident-Reporting-Response-Tracker)
 
 ---
 
