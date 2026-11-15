@@ -42,6 +42,20 @@ Parameters:
     Default: ""
     Description: Optional Cognito User Pool ARN for protecting coordinator endpoints.
 
+  EnableCloudFront:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >
+      Set to true to deploy Amazon CloudFront HTTPS distribution (requires AWS account
+      verified for CloudFront). Set to false on new/unverified accounts.
+
+# ════════════════════════════ Conditions ══════════════════════════════
+Conditions:
+  UseCloudFront: !Equals [!Ref EnableCloudFront, "true"]
+
 # ════════════════════════════ Globals ════════════════════════════════
 Globals:
   Function:
@@ -127,7 +141,6 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - !Ref FrontendOrigin
-          - !Sub "https://${FrontendDistribution.DomainName}"
         AllowMethods:
           - GET
           - POST
@@ -197,7 +210,6 @@ Resources:
         CorsRules:
           - AllowedOrigins:
               - !Ref FrontendOrigin
-              - !Sub "https://${FrontendDistribution.DomainName}"
             AllowedMethods:
               - PUT
             AllowedHeaders:
@@ -249,6 +261,7 @@ Resources:
 
   FrontendOAC:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCloudFront
     Properties:
       OriginAccessControlConfig:
         Name: CrisisPulseFrontendOAC
@@ -258,6 +271,7 @@ Resources:
 
   FrontendDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: UseCloudFront
     Properties:
       DistributionConfig:
         Enabled: true
@@ -294,6 +308,7 @@ Resources:
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
@@ -535,8 +550,11 @@ Outputs:
     Value: !Ref IncidentWorkflow
 
   FrontendCloudFrontUrl:
-    Description: HTTPS URL for the CloudFront frontend distribution
-    Value: !Sub "https://${FrontendDistribution.DomainName}"
+    Description: HTTPS URL for the CloudFront frontend distribution (if enabled)
+    Value: !If
+      - UseCloudFront
+      - !Sub "https://${FrontendDistribution.DomainName}"
+      - "N/A - CloudFront disabled (Account unverified for CloudFront; serve via S3 or local dashboard)"
 
   FrontendBucketName:
     Description: S3 bucket for static website assets (Private with CloudFront OAC)
