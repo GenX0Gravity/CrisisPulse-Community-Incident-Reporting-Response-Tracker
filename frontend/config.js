@@ -9,9 +9,8 @@
  * Leave as "" or "http://127.0.0.1:8000" to connect to `python start_frontend.py`.
  */
 window.CRISIS_PULSE_CONFIG = {
-  // Base URL of the API Gateway HTTP API (no trailing slash).
-  // When empty or pointing to localhost, the client automatically uses current server port.
-  API_BASE_URL: "",
+  // Base URL of the deployed live AWS API Gateway HTTP API
+  API_BASE_URL: "https://7pfsdt8cei.execute-api.ap-southeast-2.amazonaws.com/prod",
 
   // Milliseconds between polling checks for Step Functions completion
   POLL_INTERVAL_MS: 2000,

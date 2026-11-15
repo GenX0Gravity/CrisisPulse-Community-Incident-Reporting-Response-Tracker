@@ -100,7 +100,7 @@ def generate_synthetic_incidents() -> list[dict]:
                 {
                     "incidentId": inc_1_id,
                     "title": "[SYNTHETIC DEMO] Multi-Alarm Commercial Structure Fire",
-                    "distanceMeters": 77.8,
+                    "distanceMeters": Decimal("77.8"),
                     "createdAt": t_0,
                     "status": "In Progress",
                 }
