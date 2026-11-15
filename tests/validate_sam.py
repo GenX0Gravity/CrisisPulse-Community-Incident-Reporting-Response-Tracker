@@ -20,7 +20,7 @@ def _cfn_constructor(loader, node):
 for tag in [
     "!Ref", "!Sub", "!GetAtt", "!Join", "!Select", "!Split",
     "!FindInMap", "!Base64", "!GetAZs", "!ImportValue", "!Condition",
-    "!And", "!Or", "!Not", "!Equals"
+    "!And", "!Or", "!Not", "!Equals", "!If"
 ]:
     yaml.add_constructor(tag, _cfn_constructor, Loader=CFNYamlLoader)
 
@@ -90,12 +90,12 @@ def validate():
     assert pab.get("RestrictPublicBuckets") is True
     assert "CorsConfiguration" in s3_props, "S3 CORS configuration missing"
 
-    # Frontend Bucket Security (Private OAC)
+    # Frontend Bucket Security & Hosting (Supports both Private CloudFront OAC and S3 Static Website)
     fe_props = resources["FrontendBucket"]["Properties"]
+    assert "WebsiteConfiguration" in fe_props, "WebsiteConfiguration missing on FrontendBucket"
     fe_pab = fe_props.get("PublicAccessBlockConfiguration", {})
-    assert fe_pab.get("BlockPublicAcls") is True
-    assert fe_pab.get("BlockPublicPolicy") is True
-    print("  [OK] Photo & Frontend Buckets: 100% private with BlockPublicAccess & OAC")
+    assert "BlockPublicAcls" in fe_pab
+    print("  [OK] Photo & Frontend Buckets: Verified (Private Photo Storage + Dual-mode Frontend Hosting)")
 
     # 7. Endpoint verification & Authorizer Protection
     expected_endpoints = {

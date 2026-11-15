@@ -246,15 +246,18 @@ Resources:
               Bool:
                 "aws:SecureTransport": "false"
 
-  # ───────────── Frontend Static Hosting (Private S3 + CloudFront HTTPS) ─────────
+  # ───────────── Frontend Static Hosting (S3 Static Website / CloudFront) ───────
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
-        BlockPublicPolicy: true
+        BlockPublicPolicy: !If [UseCloudFront, true, false]
         IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+        RestrictPublicBuckets: !If [UseCloudFront, true, false]
       Tags:
         - Key: Application
           Value: CrisisPulse
@@ -308,21 +311,27 @@ Resources:
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
-    Condition: UseCloudFront
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowCloudFrontServicePrincipalReadOnly
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "${FrontendBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+          - !If
+            - UseCloudFront
+            - Sid: AllowCloudFrontServicePrincipalReadOnly
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub "${FrontendBucket.Arn}/*"
+              Condition:
+                StringEquals:
+                  "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: !Sub "${FrontendBucket.Arn}/*"
 
   # ───────────────────── Lambda Functions ────────────────────────────
 
@@ -559,6 +568,10 @@ Outputs:
   FrontendBucketName:
     Description: S3 bucket for static website assets (Private with CloudFront OAC)
     Value: !Ref FrontendBucket
+
+  FrontendWebsiteUrl:
+    Description: Live public S3 static website URL for the dashboard
+    Value: !GetAtt FrontendBucket.WebsiteURL
 
   UserPoolId:
     Description: Cognito User Pool ID for emergency coordinators
